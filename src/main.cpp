@@ -4,6 +4,9 @@
 
 //Constants
   const uint32_t interval = 100; //Display update interval
+  const uint32_t stepSizes[] = {51076057, 54113197, 57330935, 60740010, 64351799, 68178356, 72232452, 76527617, 81078186, 85899346, 91007187, 96418756, 0}; //Shared  
+
+  volatile uint32_t currentStepSize;
 
 //Pin definitions
   //Row select and enable
@@ -65,6 +68,16 @@ void setRow(uint8_t rowIdx) {
   digitalWrite(REN_PIN,HIGH);
 }
 
+void sampleISR() {
+  static uint32_t phaseAcc = 0;
+  phaseAcc += currentStepSize;
+  int32_t Vout = (phaseAcc >> 24) - 128;
+  analogWrite(OUTR_PIN, Vout + 128);
+}
+
+TIM_TypeDef *Instance = TIM1;
+HardwareTimer *sampleTimer = new HardwareTimer(Instance);
+
 void setup() {
   // put your setup code here, to run once:
 
@@ -92,6 +105,9 @@ void setup() {
   u8g2.begin();
   setOutMuxBit(DEN_BIT, HIGH);  //Enable display power supply
 
+  sampleTimer->setOverflow(22000, HERTZ_FORMAT);
+  sampleTimer->attachInterrupt(sampleISR);
+  sampleTimer->resume();
   //Initialise UART
   Serial.begin(9600);
   Serial.println("Hello World");
@@ -101,16 +117,30 @@ void loop() {
   // put your main code here, to run repeatedly:
   static uint32_t next = millis();
   std::bitset<32> inputs;
+  bool released = true; // Assume all inputs are HIGH initially
+
   while (millis() < next);  //Wait for next interval
 
   next += interval;
-  for (int i=0; i<=4; i++) {
+  for (int i=0; i<3; i++) {
     setRow(i);
     delayMicroseconds(3);
     std::bitset<4> value = readCols();
     for (int j=0; j<=4; j++){
       inputs[i*4+j] = value[j];
     }
+  }
+  for (int i = 0; i < 12; i++) {
+      if (inputs[i] == LOW) {
+          Serial.println(i); // Print the index of the first LOW input
+          currentStepSize = stepSizes[i]; // Set currentStepSize based on this index
+          released = false; // Found a LOW, so not all inputs are HIGH
+          break; // Exit the loop early since we've found the first LOW
+      }
+  }
+  if (released) {
+      // If after checking all inputs, they are all HIGH, set to stepSizes[12]
+      currentStepSize = stepSizes[12];
   }
 
   //Update display
