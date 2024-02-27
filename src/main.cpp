@@ -1,12 +1,17 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <bitset>
+#include <STM32FreeRTOS.h>
 
 //Constants
   const uint32_t interval = 100; //Display update interval
   const uint32_t stepSizes[] = {51076057, 54113197, 57330935, 60740010, 64351799, 68178356, 72232452, 76527617, 81078186, 85899346, 91007187, 96418756, 0}; //Shared  
 
   volatile uint32_t currentStepSize;
+
+  struct {
+  std::bitset<32> inputs;  
+  } sysState;
 
 //Pin definitions
   //Row select and enable
@@ -70,9 +75,41 @@ void setRow(uint8_t rowIdx) {
 
 void sampleISR() {
   static uint32_t phaseAcc = 0;
-  phaseAcc += currentStepSize;
+  // static uint32_t localCurrentStepSize = 0;
+  unsigned int localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
+  phaseAcc += localCurrentStepSize;
   int32_t Vout = (phaseAcc >> 24) - 128;
   analogWrite(OUTR_PIN, Vout + 128);
+}
+
+void scanKeysTask(void * pvParameters) {
+  const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  while (1) {
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    bool released = true; // Assume all inputs are HIGH initially
+    for (int i=0; i<3; i++) {
+      setRow(i);
+      delayMicroseconds(3);
+      std::bitset<4> value = readCols();
+      for (int j=0; j<=4; j++){
+        sysState.inputs[i*4+j] = value[j];
+      }
+    }
+    for (int i = 0; i < 12; i++) {
+        if (sysState.inputs[i] == LOW) {
+            // static uint32_t localCurrentStepSize = stepSizes[i];
+            __atomic_store_n(&currentStepSize, stepSizes[i], __ATOMIC_RELAXED);          
+            // currentStepSize = stepSizes[i]; // Set currentStepSize based on this index
+            released = false; // Found a LOW, so not all inputs are HIGH
+            break; // Exit the loop early since we've found the first LOW
+        }
+    }
+    if (released) {
+        // If after checking all inputs, they are all HIGH, set to stepSizes[12]
+        currentStepSize = stepSizes[12];
+    }
+  }
 }
 
 TIM_TypeDef *Instance = TIM1;
@@ -105,50 +142,31 @@ void setup() {
   u8g2.begin();
   setOutMuxBit(DEN_BIT, HIGH);  //Enable display power supply
 
+  TaskHandle_t scanKeysHandle = NULL;
+  xTaskCreate(
+  scanKeysTask,		/* Function that implements the task */
+  "scanKeys",		/* Text name for the task */
+  64,      		/* Stack size in words, not bytes */
+  NULL,			/* Parameter passed into the task */
+  1,			/* Task priority */
+  &scanKeysHandle );	/* Pointer to store the task handle */
+
   sampleTimer->setOverflow(22000, HERTZ_FORMAT);
   sampleTimer->attachInterrupt(sampleISR);
   sampleTimer->resume();
   //Initialise UART
   Serial.begin(9600);
   Serial.println("Hello World");
+  vTaskStartScheduler();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  static uint32_t next = millis();
-  std::bitset<32> inputs;
-  bool released = true; // Assume all inputs are HIGH initially
-
-  while (millis() < next);  //Wait for next interval
-
-  next += interval;
-  for (int i=0; i<3; i++) {
-    setRow(i);
-    delayMicroseconds(3);
-    std::bitset<4> value = readCols();
-    for (int j=0; j<=4; j++){
-      inputs[i*4+j] = value[j];
-    }
-  }
-  for (int i = 0; i < 12; i++) {
-      if (inputs[i] == LOW) {
-          Serial.println(i); // Print the index of the first LOW input
-          currentStepSize = stepSizes[i]; // Set currentStepSize based on this index
-          released = false; // Found a LOW, so not all inputs are HIGH
-          break; // Exit the loop early since we've found the first LOW
-      }
-  }
-  if (released) {
-      // If after checking all inputs, they are all HIGH, set to stepSizes[12]
-      currentStepSize = stepSizes[12];
-  }
-
   //Update display
   u8g2.clearBuffer();         // clear the internal memory
   u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
   u8g2.drawStr(2,10,"Helllo World!");  // write something to the internal memory
   u8g2.setCursor(2,20);
-  u8g2.print(inputs.to_ulong(),HEX); 
+  u8g2.print(sysState.inputs.to_ulong(),HEX); 
   u8g2.sendBuffer();          // transfer internal memory to the display
 
   //Toggle LED
