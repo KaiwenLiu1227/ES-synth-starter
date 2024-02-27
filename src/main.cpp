@@ -50,15 +50,19 @@ void setOutMuxBit(const uint8_t bitIdx, const bool value) {
 
 std::bitset<4> readCols(){
   std::bitset<4> result;
-  digitalWrite(RA0_PIN, LOW);
-  digitalWrite(RA1_PIN, LOW);
-  digitalWrite(RA2_PIN, LOW);
-  digitalWrite(REN_PIN, HIGH);
   result[0] = digitalRead(C0_PIN);
   result[1] = digitalRead(C1_PIN);
   result[2] = digitalRead(C2_PIN);
   result[3] = digitalRead(C3_PIN);
   return result;
+}
+
+void setRow(uint8_t rowIdx) {
+  digitalWrite(REN_PIN,LOW);
+  digitalWrite(RA0_PIN, rowIdx & 0x01);
+  digitalWrite(RA1_PIN, rowIdx & 0x02);
+  digitalWrite(RA2_PIN, rowIdx & 0x04);
+  digitalWrite(REN_PIN,HIGH);
 }
 
 void setup() {
@@ -96,11 +100,18 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   static uint32_t next = millis();
-
+  std::bitset<32> inputs;
   while (millis() < next);  //Wait for next interval
 
   next += interval;
-  std::bitset<4> inputs = readCols();
+  for (int i=0; i<=4; i++) {
+    setRow(i);
+    delayMicroseconds(3);
+    std::bitset<4> value = readCols();
+    for (int j=0; j<=4; j++){
+      inputs[i*4+j] = value[j];
+    }
+  }
 
   //Update display
   u8g2.clearBuffer();         // clear the internal memory
