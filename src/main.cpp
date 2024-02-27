@@ -82,6 +82,27 @@ void sampleISR() {
   analogWrite(OUTR_PIN, Vout + 128);
 }
 
+void displayUpdateTask(void * pvParameters) {
+  u8g2.setFont(u8g2_font_squeezed_r6_tr);
+  const TickType_t xFrequency = 36/portTICK_PERIOD_MS;
+  TickType_t xLastWakeTime= xTaskGetTickCount();   
+  u8g2.clearBuffer();
+  u8g2.setCursor(58,22);
+  u8g2.print("MusicSynth");
+  u8g2.sendBuffer();  
+  delay(2000);
+  while(1) {
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
+    u8g2.drawStr(2,10,"Helllo World!");  // write something to the internal memory
+    u8g2.setCursor(2,20);
+    u8g2.print(sysState.inputs.to_ulong(),HEX); 
+    u8g2.sendBuffer();          // transfer internal memory to the display
+
+    }
+  }
+
 void scanKeysTask(void * pvParameters) {
   const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -151,6 +172,9 @@ void setup() {
   1,			/* Task priority */
   &scanKeysHandle );	/* Pointer to store the task handle */
 
+  TaskHandle_t displayUpdateHandle = NULL;
+  xTaskCreate(displayUpdateTask, "displayUpdate",512, NULL, 1, &displayUpdateHandle);
+
   sampleTimer->setOverflow(22000, HERTZ_FORMAT);
   sampleTimer->attachInterrupt(sampleISR);
   sampleTimer->resume();
@@ -162,12 +186,6 @@ void setup() {
 
 void loop() {
   //Update display
-  u8g2.clearBuffer();         // clear the internal memory
-  u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
-  u8g2.drawStr(2,10,"Helllo World!");  // write something to the internal memory
-  u8g2.setCursor(2,20);
-  u8g2.print(sysState.inputs.to_ulong(),HEX); 
-  u8g2.sendBuffer();          // transfer internal memory to the display
 
   //Toggle LED
   digitalToggle(LED_BUILTIN);
