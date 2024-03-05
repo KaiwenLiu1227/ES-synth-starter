@@ -106,10 +106,15 @@ void displayUpdateTask(void * pvParameters) {
     u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
 
     // Volume
+    
     u8g2.setCursor(2,10);
     u8g2.print("Vol:");
+    int localRotationValue3 = __atomic_load_n(&rotation[3], __ATOMIC_RELAXED);
+    int localRotationValue0 = __atomic_load_n(&rotation[0], __ATOMIC_RELAXED);
     u8g2.drawFrame(2, 11, 40, 5);
-    u8g2.drawBox(2, 11, rotation[3]*40/16, 5);
+    u8g2.drawBox(2, 11, localRotationValue3*40/16, 5);
+    u8g2.drawFrame(50, 11, 40, 5);
+    u8g2.drawBox(50, 11, localRotationValue0*40/16, 5);
 
     xSemaphoreTake(sysState.mutex, portMAX_DELAY);
     u8g2.print(sysState.inputs.to_ulong(),HEX); 
@@ -127,7 +132,7 @@ void scanKeysTask(void * pvParameters) {
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
     bool released = true; // Assume all inputs are HIGH initially
-    for (int i=0; i<=3; i++) { // extent to 3 to scan ror3
+    for (int i=0; i<=4; i++) { // extent to 3 to scan ror3
       setRow(i);
       delayMicroseconds(3);
       std::bitset<4> value = readCols();
