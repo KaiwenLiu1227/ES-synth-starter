@@ -2,13 +2,14 @@
 #include <U8g2lib.h>
 #include <bitset>
 #include <STM32FreeRTOS.h>
+#include <knob.hpp>
 
 //Constants
   const uint32_t interval = 100; //Display update interval
   const uint32_t stepSizes[] = {51076057, 54113197, 57330935, 60740010, 64351799, 68178356, 72232452, 76527617, 81078186, 85899346, 91007187, 96418756, 0}; //Shared  
 
   volatile uint32_t currentStepSize;
-  volatile int rotation3 = 16, rotation2 = 4, rotation1 = 0, rotation0 = 0;
+  volatile int rotation[] = {16,16,16,16};
 
   struct {
   std::bitset<32> inputs;  
@@ -46,6 +47,13 @@
 //Display driver object
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0);
 
+
+
+KnobRotator knob0(0);
+KnobRotator knob1(1);
+KnobRotator knob2(2);
+KnobRotator knob3(3);
+
 //Function to set outputs using key matrix
 void setOutMuxBit(const uint8_t bitIdx, const bool value) {
       digitalWrite(REN_PIN,LOW);
@@ -80,7 +88,7 @@ void sampleISR() {
   // static uint32_t localCurrentStepSize = 0;
   unsigned int localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
   phaseAcc += localCurrentStepSize;
-  analogWrite(OUTR_PIN, (phaseAcc >> 24) >> (8 - rotation3 / 2));
+  analogWrite(OUTR_PIN, (phaseAcc >> 24) >> (8 - rotation[3] / 2));
 }
 
 void displayUpdateTask(void * pvParameters) {
@@ -101,7 +109,7 @@ void displayUpdateTask(void * pvParameters) {
     u8g2.setCursor(2,10);
     u8g2.print("Vol:");
     u8g2.drawFrame(2, 11, 40, 5);
-    u8g2.drawBox(2, 11, rotation3*40/16, 5);
+    u8g2.drawBox(2, 11, rotation[3]*40/16, 5);
 
     xSemaphoreTake(sysState.mutex, portMAX_DELAY);
     u8g2.print(sysState.inputs.to_ulong(),HEX); 
@@ -114,10 +122,6 @@ void scanKeysTask(void * pvParameters) {
   const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
   int preKey = 12,stepSize = 0, octave;
-  int ror0, ror1, ror2, ror3;
-  bool dir0 = 1, dir1 = 1, dir2 = 1, dir3 = 1;
-  uint8_t pre0 = 22, pre1 = 22, pre2 = 22, pre3 = 22;
-  uint8_t cur0, cur1, cur2, cur3;
   uint8_t posn0 = 0, posn1 = 0, posn2 = 8;
   uint8_t TX_Message[8] = {0};
   while (1) {
@@ -149,21 +153,11 @@ void scanKeysTask(void * pvParameters) {
     }
         // Volume Knob
     xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-    cur3 = sysState.inputs[12] + (sysState.inputs[13] << 1);
+    knob3.updateRotation(sysState.inputs);
+    knob2.updateRotation(sysState.inputs);
+    knob1.updateRotation(sysState.inputs);
+    knob0.updateRotation(sysState.inputs);
     xSemaphoreGive(sysState.mutex);
-    ror3 = (pre3<<2) + cur3;
-    if (ror3 == 0x01 || ror3 == 0x07 || ror3 == 0x08 || ror3 == 0x0e) {
-      __atomic_add_fetch(&rotation3, 1, __ATOMIC_RELAXED);
-      dir3 = 1;
-    } else if (ror3 == 0x02 || ror3 == 0x04 || ror3 == 0x0b || ror3 == 0x0d) {
-      __atomic_add_fetch(&rotation3, -1, __ATOMIC_RELAXED);
-      dir3 = -1;
-    } else if (ror3 == 0x03 || ror3 == 0x06 || ror3 == 0x09 || ror3 == 0x0c) {
-      __atomic_add_fetch(&rotation3, dir3, __ATOMIC_RELAXED);
-    }
-    if (rotation3 < 0) __atomic_store_n(&rotation3, 0, __ATOMIC_RELAXED);
-    if (rotation3 > 16) __atomic_store_n(&rotation3, 16, __ATOMIC_RELAXED);
-    pre3 = cur3;
   }
 }
 
