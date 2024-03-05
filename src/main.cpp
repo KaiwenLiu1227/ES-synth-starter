@@ -8,9 +8,10 @@
   const uint32_t stepSizes[] = {51076057, 54113197, 57330935, 60740010, 64351799, 68178356, 72232452, 76527617, 81078186, 85899346, 91007187, 96418756, 0}; //Shared  
 
   volatile uint32_t currentStepSize;
-
+  
   struct {
   std::bitset<32> inputs;  
+  SemaphoreHandle_t mutex;  
   } sysState;
 
 //Pin definitions
@@ -97,9 +98,10 @@ void displayUpdateTask(void * pvParameters) {
     u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
     u8g2.drawStr(2,10,"Helllo World!");  // write something to the internal memory
     u8g2.setCursor(2,20);
+    xSemaphoreTake(sysState.mutex, portMAX_DELAY);
     u8g2.print(sysState.inputs.to_ulong(),HEX); 
+    xSemaphoreGive(sysState.mutex);
     u8g2.sendBuffer();          // transfer internal memory to the display
-
     }
   }
 
@@ -114,10 +116,13 @@ void scanKeysTask(void * pvParameters) {
       delayMicroseconds(3);
       std::bitset<4> value = readCols();
       for (int j=0; j<=4; j++){
+        xSemaphoreTake(sysState.mutex, portMAX_DELAY);
         sysState.inputs[i*4+j] = value[j];
+        xSemaphoreGive(sysState.mutex);
       }
     }
     for (int i = 0; i < 12; i++) {
+      xSemaphoreTake(sysState.mutex, portMAX_DELAY);
         if (sysState.inputs[i] == LOW) {
             // static uint32_t localCurrentStepSize = stepSizes[i];
             __atomic_store_n(&currentStepSize, stepSizes[i], __ATOMIC_RELAXED);          
@@ -125,6 +130,7 @@ void scanKeysTask(void * pvParameters) {
             released = false; // Found a LOW, so not all inputs are HIGH
             break; // Exit the loop early since we've found the first LOW
         }
+      xSemaphoreGive(sysState.mutex);  
     }
     if (released) {
         // If after checking all inputs, they are all HIGH, set to stepSizes[12]
@@ -162,6 +168,8 @@ void setup() {
   setOutMuxBit(DRST_BIT, HIGH);  //Release display logic reset
   u8g2.begin();
   setOutMuxBit(DEN_BIT, HIGH);  //Enable display power supply
+
+  sysState.mutex = xSemaphoreCreateMutex();
 
   TaskHandle_t scanKeysHandle = NULL;
   xTaskCreate(
