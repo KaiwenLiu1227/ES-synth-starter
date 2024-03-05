@@ -8,7 +8,8 @@
   const uint32_t stepSizes[] = {51076057, 54113197, 57330935, 60740010, 64351799, 68178356, 72232452, 76527617, 81078186, 85899346, 91007187, 96418756, 0}; //Shared  
 
   volatile uint32_t currentStepSize;
-  
+  volatile int rotation3 = 16, rotation2 = 4, rotation1 = 0, rotation0 = 0;
+
   struct {
   std::bitset<32> inputs;  
   SemaphoreHandle_t mutex;  
@@ -79,8 +80,7 @@ void sampleISR() {
   // static uint32_t localCurrentStepSize = 0;
   unsigned int localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
   phaseAcc += localCurrentStepSize;
-  int32_t Vout = (phaseAcc >> 24) - 128;
-  analogWrite(OUTR_PIN, Vout + 128);
+  analogWrite(OUTR_PIN, (phaseAcc >> 24) >> (8 - rotation3 / 2));
 }
 
 void displayUpdateTask(void * pvParameters) {
@@ -96,8 +96,13 @@ void displayUpdateTask(void * pvParameters) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
-    u8g2.drawStr(2,10,"Helllo World!");  // write something to the internal memory
-    u8g2.setCursor(2,20);
+
+    // Volume
+    u8g2.setCursor(2,10);
+    u8g2.print("Vol:");
+    u8g2.drawFrame(2, 11, 40, 5);
+    u8g2.drawBox(2, 11, rotation3*40/16, 5);
+
     xSemaphoreTake(sysState.mutex, portMAX_DELAY);
     u8g2.print(sysState.inputs.to_ulong(),HEX); 
     xSemaphoreGive(sysState.mutex);
@@ -108,10 +113,17 @@ void displayUpdateTask(void * pvParameters) {
 void scanKeysTask(void * pvParameters) {
   const TickType_t xFrequency = 50/portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
+  int preKey = 12,stepSize = 0, octave;
+  int ror0, ror1, ror2, ror3;
+  bool dir0 = 1, dir1 = 1, dir2 = 1, dir3 = 1;
+  uint8_t pre0 = 22, pre1 = 22, pre2 = 22, pre3 = 22;
+  uint8_t cur0, cur1, cur2, cur3;
+  uint8_t posn0 = 0, posn1 = 0, posn2 = 8;
+  uint8_t TX_Message[8] = {0};
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
     bool released = true; // Assume all inputs are HIGH initially
-    for (int i=0; i<3; i++) {
+    for (int i=0; i<=3; i++) { // extent to 3 to scan ror3
       setRow(i);
       delayMicroseconds(3);
       std::bitset<4> value = readCols();
@@ -128,7 +140,6 @@ void scanKeysTask(void * pvParameters) {
             __atomic_store_n(&currentStepSize, stepSizes[i], __ATOMIC_RELAXED);          
             // currentStepSize = stepSizes[i]; // Set currentStepSize based on this index
             released = false; // Found a LOW, so not all inputs are HIGH
-            break; // Exit the loop early since we've found the first LOW
         }
       xSemaphoreGive(sysState.mutex);  
     }
@@ -136,6 +147,23 @@ void scanKeysTask(void * pvParameters) {
         // If after checking all inputs, they are all HIGH, set to stepSizes[12]
         currentStepSize = stepSizes[12];
     }
+        // Volume Knob
+    xSemaphoreTake(sysState.mutex, portMAX_DELAY);
+    cur3 = sysState.inputs[12] + (sysState.inputs[13] << 1);
+    xSemaphoreGive(sysState.mutex);
+    ror3 = (pre3<<2) + cur3;
+    if (ror3 == 0x01 || ror3 == 0x07 || ror3 == 0x08 || ror3 == 0x0e) {
+      __atomic_add_fetch(&rotation3, 1, __ATOMIC_RELAXED);
+      dir3 = 1;
+    } else if (ror3 == 0x02 || ror3 == 0x04 || ror3 == 0x0b || ror3 == 0x0d) {
+      __atomic_add_fetch(&rotation3, -1, __ATOMIC_RELAXED);
+      dir3 = -1;
+    } else if (ror3 == 0x03 || ror3 == 0x06 || ror3 == 0x09 || ror3 == 0x0c) {
+      __atomic_add_fetch(&rotation3, dir3, __ATOMIC_RELAXED);
+    }
+    if (rotation3 < 0) __atomic_store_n(&rotation3, 0, __ATOMIC_RELAXED);
+    if (rotation3 > 16) __atomic_store_n(&rotation3, 16, __ATOMIC_RELAXED);
+    pre3 = cur3;
   }
 }
 
